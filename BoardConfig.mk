@@ -118,6 +118,7 @@ BOARD_KERNEL_CMDLINE := \
     sysctl.kernel.firmware_config.force_sysfs_fallback=1 \
     swinfo.fingerprint=peridot:$(XPERIENCE_VERSION) \
     mtdoops.fingerprint=peridot:$(XPERIENCE_VERSION)
+    androidboot.init_fatal_reboot_target=recovery
 
 BOARD_BOOTCONFIG := \
     androidboot.hardware=qcom \
