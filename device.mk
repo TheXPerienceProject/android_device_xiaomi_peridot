@@ -263,20 +263,6 @@ PRODUCT_SYSTEM_PROPERTIES += \
 PRODUCT_DEX_PREOPT_DEFAULT_COMPILER_FILTER := speed
 OVERRIDE_DISABLE_DEXOPT_ALL := false
 
-# ART Debug Stuff
-ART_BUILD_TARGET_NDEBUG := true
-ART_BUILD_TARGET_DEBUG := false
-ART_BUILD_HOST_NDEBUG := true
-ART_BUILD_HOST_DEBUG := false
-
-# Debloat
-PRODUCT_PACKAGES += \
-    RemovePackagesPeridot
-
-#Xiaomi Parts
-PRODUCT_PACKAGES += \
-    XiaomiParts
-
 # Media
 PRODUCT_COPY_FILES += \
     $(AUDIO_HAL_DIR)/configs/common/codec2/media_codecs_c2_audio.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2_audio.xml
