@@ -188,13 +188,6 @@ PRODUCT_PACKAGES += \
     IPACM_cfg.xml \
     IPACM_Filter_cfg.xml
 
-# IR
-PRODUCT_PACKAGES += \
-    android.hardware.ir-service.lineage
-
-PRODUCT_COPY_FILES += \
-    frameworks/native/data/etc/android.hardware.consumerir.xml:$(TARGET_COPY_OUT_ODM)/etc/permissions/android.hardware.consumerir.xml
-
 # Init
 PRODUCT_PACKAGES += \
     charger_fw_fstab.qti \
@@ -243,15 +236,42 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.device_id_attestation.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.device_id_attestation.xml \
     frameworks/native/data/etc/android.hardware.keystore.app_attest_key.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.keystore.app_attest_key.xml
 
-# Lineage Health
+#Xiaomi Parts
 PRODUCT_PACKAGES += \
-    vendor.lineage.health-service.default
+    XiaomiParts
 
-$(call soong_config_set_bool,lineage_health,charging_control_supports_bypass,false)
-$(call soong_config_set,lineage_health,fast_charge_node,/sys/class/qcom-battery/fastcharge_enable)
-$(call soong_config_set,lineage_health,fast_charge_value_none,0)
-$(call soong_config_set,lineage_health,fast_charge_value_fast_charge,1)
-$(call soong_config_set,lineage_health,fast_charge_value_super_fast_charge,2)
+# Dexopt
+PRODUCT_SYSTEM_PROPERTIES += \
+    pm.dexopt.post-boot=speed \
+    pm.dexopt.first-boot=speed \
+    pm.dexopt.boot-after-ota=speed-profile \
+    pm.dexopt.boot-after-mainline-update=speed \
+    pm.dexopt.install=speed-profile \
+    pm.dexopt.install-fast=speed \
+    pm.dexopt.install-bulk=speed-profile \
+    pm.dexopt.install-bulk-secondary=speed \
+    pm.dexopt.install-bulk-downgraded=speed \
+    pm.dexopt.install-bulk-secondary-downgraded=speed \
+    pm.dexopt.bg-dexopt=speed-profile \
+    pm.dexopt.ab-ota=speed-profile \
+    pm.dexopt.inactive=speed \
+    pm.dexopt.cmdline=speed \
+    pm.dexopt.first-use=speed-profile \
+    pm.dexopt.secondary=speed-profile \
+    pm.dexopt.shared=speed
+
+PRODUCT_DEX_PREOPT_DEFAULT_COMPILER_FILTER := speed
+OVERRIDE_DISABLE_DEXOPT_ALL := false
+
+# ART Debug Stuff
+ART_BUILD_TARGET_NDEBUG := true
+ART_BUILD_TARGET_DEBUG := false
+ART_BUILD_HOST_NDEBUG := true
+ART_BUILD_HOST_DEBUG := false
+
+# Debloat
+PRODUCT_PACKAGES += \
+    RemovePackagesPeridot
 
 # Media
 PRODUCT_COPY_FILES += \
@@ -319,11 +339,14 @@ PRODUCT_PACKAGES += \
 
 # Power
 PRODUCT_PACKAGES += \
+    android.hardware.power-service \
     android.hardware.power-service.lineage-libperfmgr \
     libqti-perfd-client
 
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/power/powerhint.json:$(TARGET_COPY_OUT_VENDOR)/etc/powerhint.json
+
+TARGET_BOARD_PLATFORM := pineapple
 
 # QSPA
 PRODUCT_PACKAGES += \
@@ -341,7 +364,7 @@ PRODUCT_SOONG_NAMESPACES += \
     $(LOCAL_PATH) \
     hardware/google/interfaces \
     hardware/google/pixel \
-    hardware/lineage/interfaces/power-libperfmgr \
+    hardware/xperience/interfaces/power-libperfmgr \
     hardware/qcom-caf/common/libqti-perfd-client \
     hardware/xiaomi \
     vendor/qcom/opensource/usb/etc
@@ -395,7 +418,6 @@ PRODUCT_PACKAGES += \
     xiaomi-telephony-stub
 
 PRODUCT_BOOT_JARS += \
-    telephony-ext \
     xiaomi-telephony-stub
 
 PRODUCT_COPY_FILES += \
