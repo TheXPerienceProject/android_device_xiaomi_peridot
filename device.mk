@@ -571,3 +571,6 @@ $(call inherit-product-if-exists, device/xiaomi/peridot-miuicamera/device.mk)
 
 # NotGameTurbo
 $(call inherit-product, packages/apps/NotGameTurbo/notgameturbo.mk)
+
+# Sign Build
+-include vendor/xperience-priv/keys/keys.mk
