@@ -234,6 +234,8 @@ ENABLE_VENDOR_RIL_SERVICE := true
 
 # Sepolicy
 include device/xperience/sepolicy/libperfmgr/sepolicy.mk
+include device/xperience/sepolicy/libion/sepolicy.mk
+include device/xperience/sepolicy/libperfmgr/sepolicy.mk
 include device/qcom/sepolicy_vndr/SEPolicy.mk
 include device/xiaomi/peridot/sepolicy/SEPolicy-diag.mk
 BOARD_VENDOR_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/vendor
