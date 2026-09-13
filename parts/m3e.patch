@@ -1,0 +1,468 @@
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index 040ca11..0474020 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -293,6 +293,20 @@
+                 android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                 android:value="true" />
+         </service>
++        <!-- Bypass Charging Tile Service -->
++        <service
++            android:name=".charge.BypassChargingTileService"
++            android:label="@string/bypass_charging_tile_label"
++            android:icon="@drawable/ic_bypass_charging"
++            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
++            android:exported="true">
++            <intent-filter>
++                <action android:name="android.service.quicksettings.action.QS_TILE" />
++            </intent-filter>
++            <meta-data
++                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
++                android:value="true" />
++        </service>
+         <!-- Background Charge Service -->
+         <service
+             android:name=".charge.ChargeEnforcementService"
+diff --git a/res/drawable/ic_bypass_charging.xml b/res/drawable/ic_bypass_charging.xml
+new file mode 100644
+index 0000000..d3279d9
+--- /dev/null
++++ b/res/drawable/ic_bypass_charging.xml
+@@ -0,0 +1,13 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24.0"
++    android:viewportHeight="24.0">
++    <path
++        android:fillColor="#FFFFFFFF"
++        android:fillType="evenOdd"
++        android:pathData="M11,8 L13,8 L13,10 L11,10 Z
++                          M9,10 C7.895,10 7,10.895 7,12 L7,20 C7,21.105 7.895,22 9,22 L15,22 C16.105,22 17,21.105 17,20 L17,12 C17,10.895 16.105,10 15,10 Z
++                          M9,12 L15,12 L15,20 L9,20 Z
++                          M1,13 L5,13 L9,9 L15,9 L19,13 L21,13 L21,11 L24,14 L21,17 L21,15 L19,15 L15,11 L9,11 L5,15 L1,15 Z" />
++</vector>
+diff --git a/res/values/strings.xml b/res/values/strings.xml
+index 6dd123d..5ed7fa2 100644
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -97,6 +97,12 @@
+     <!-- Charge Control -->
+     <string name="charge_tile_title">Charge Control</string>
+     <string name="charge_summary">Limit charging current to reduce heat and battery wear</string>
++    <string name="bypass_charging_title">Bypass charging</string>
++    <string name="bypass_charging_summary_off">Off — normal battery charging</string>
++    <string name="bypass_charging_summary_on">Active — running off adapter power</string>
++    <string name="bypass_charging_summary_pending">Switching…</string>
++    <string name="bypass_charging_summary_unavailable">Not supported on this kernel</string>
++    <string name="bypass_charging_tile_label">Bypass Chg</string>
+     <string name="charge_mode_ok">OK</string>
+     <string name="charge_mode_cool">Cool</string>
+     <string name="charge_mode_nuke">Nuke</string>
+diff --git a/res/xml/charge_settings.xml b/res/xml/charge_settings.xml
+index df2f7c5..53944f5 100644
+--- a/res/xml/charge_settings.xml
++++ b/res/xml/charge_settings.xml
+@@ -24,4 +24,10 @@
+         android:entryValues="@array/charge_mode_values"
+         android:persistent="false" />
+ 
++    <androidx.preference.SwitchPreferenceCompat
++        android:key="bypass_charging_pref"
++        android:title="@string/bypass_charging_title"
++        android:summary="@string/bypass_charging_summary_off"
++        android:persistent="false" />
++
+ </PreferenceScreen>
+diff --git a/src/org/lineageos/settings/charge/BypassChargingTileService.java b/src/org/lineageos/settings/charge/BypassChargingTileService.java
+new file mode 100644
+index 0000000..958e22d
+--- /dev/null
++++ b/src/org/lineageos/settings/charge/BypassChargingTileService.java
+@@ -0,0 +1,135 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.lineageos.settings.charge;
++
++import android.graphics.drawable.Icon;
++import android.os.Handler;
++import android.os.Looper;
++import android.service.quicksettings.Tile;
++import android.service.quicksettings.TileService;
++import android.util.Log;
++
++import org.lineageos.settings.R;
++
++/**
++ * QS tile mirror of the bypass-charging switch on the charging screen.
++ * Both talk to the kernel node only through BypassChargingUtils, so a
++ * toggle from either place is reflected in the other next time it's shown.
++ *
++ * The kernel-side transition takes ~5s (see the sysfs ABI doc), so onClick
++ * doesn't just flip the tile — it shows the pending state and polls until
++ * the kernel confirms, same reasoning as the fragment's switch.
++ */
++public class BypassChargingTileService extends TileService {
++    private static final String TAG = "BypassChargingTileService";
++    private static final long POLL_INTERVAL_MS = 250L;
++    private static final long POLL_TIMEOUT_MS = 8000L;
++
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++    private long mPollDeadline;
++
++    @Override
++    public void onStartListening() {
++        super.onStartListening();
++        BypassChargingUtils.State state = BypassChargingUtils.readState();
++        updateTile(state);
++        if (BypassChargingUtils.isPending(state)) {
++            mPollDeadline = System.currentTimeMillis() + POLL_TIMEOUT_MS;
++            mHandler.postDelayed(mPollRunnable, POLL_INTERVAL_MS);
++        }
++    }
++
++    @Override
++    public void onStopListening() {
++        super.onStopListening();
++        mHandler.removeCallbacksAndMessages(null);
++    }
++
++    @Override
++    public void onClick() {
++        super.onClick();
++        BypassChargingUtils.State current = BypassChargingUtils.readState();
++        if (BypassChargingUtils.isPending(current)) {
++            // already mid-transition, ignore extra taps rather than risk
++            // hitting the kernel's -EBUSY path
++            return;
++        }
++
++        boolean requestOn = !BypassChargingUtils.isOn(current);
++        if (!BypassChargingUtils.requestState(requestOn)) {
++            Log.w(TAG, "bypass_charging_enable write rejected");
++            updateTile(BypassChargingUtils.readState());
++            return;
++        }
++
++        updateTile(requestOn ? BypassChargingUtils.State.PENDING_ON
++                              : BypassChargingUtils.State.PENDING_OFF);
++        mPollDeadline = System.currentTimeMillis() + POLL_TIMEOUT_MS;
++        mHandler.postDelayed(mPollRunnable, POLL_INTERVAL_MS);
++    }
++
++    @Override
++    public void onDestroy() {
++        super.onDestroy();
++        mHandler.removeCallbacksAndMessages(null);
++    }
++
++    private final Runnable mPollRunnable = new Runnable() {
++        @Override
++        public void run() {
++            BypassChargingUtils.State state = BypassChargingUtils.readState();
++            updateTile(state);
++            if (BypassChargingUtils.isPending(state)
++                    && System.currentTimeMillis() < mPollDeadline) {
++                mHandler.postDelayed(this, POLL_INTERVAL_MS);
++            }
++        }
++    };
++
++    private void updateTile(BypassChargingUtils.State state) {
++        Tile tile = getQsTile();
++        if (tile == null) {
++            return;
++        }
++
++        tile.setLabel(getString(R.string.bypass_charging_tile_label));
++        tile.setIcon(Icon.createWithResource(this, R.drawable.ic_bypass_charging));
++
++        switch (state) {
++            case ON:
++                tile.setState(Tile.STATE_ACTIVE);
++                tile.setSubtitle(getString(R.string.bypass_charging_summary_on));
++                break;
++            case PENDING_ON:
++            case PENDING_OFF:
++                tile.setState(Tile.STATE_ACTIVE);
++                tile.setSubtitle(getString(R.string.bypass_charging_summary_pending));
++                break;
++            case UNAVAILABLE:
++                tile.setState(Tile.STATE_UNAVAILABLE);
++                tile.setSubtitle(getString(R.string.bypass_charging_summary_unavailable));
++                break;
++            case OFF:
++            default:
++                tile.setState(Tile.STATE_INACTIVE);
++                tile.setSubtitle(getString(R.string.bypass_charging_summary_off));
++                break;
++        }
++
++        tile.updateTile();
++    }
++}
+diff --git a/src/org/lineageos/settings/charge/BypassChargingUtils.java b/src/org/lineageos/settings/charge/BypassChargingUtils.java
+new file mode 100644
+index 0000000..ff85cef
+--- /dev/null
++++ b/src/org/lineageos/settings/charge/BypassChargingUtils.java
+@@ -0,0 +1,87 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.lineageos.settings.charge;
++
++import org.lineageos.settings.utils.FileUtils;
++
++/**
++ * Talks to /sys/class/qcom-battery/bypass_charging_enable. The kernel side
++ * runs the actual smart_chg/sport_mode write sequence asynchronously (~5s,
++ * disables fastcharge first, restores it on revert) — see the ABI doc for
++ * that node. This class only ever does plain file I/O: the app runs as
++ * android.uid.system and is privileged, so no root shell is needed, same
++ * as every other node this app already talks to via FileUtils.
++ *
++ * Shared by ChargeSettingsFragment (the switch on the charging screen) and
++ * BypassChargingTileService (the QS tile), so both read the exact same
++ * state and neither can drift out of sync with the other.
++ */
++public final class BypassChargingUtils {
++
++    private static final String NODE = "/sys/class/qcom-battery/bypass_charging_enable";
++
++    public enum State {
++        OFF,
++        ON,
++        PENDING_OFF,
++        PENDING_ON,
++        UNAVAILABLE,
++    }
++
++    private BypassChargingUtils() {
++        // static-only
++    }
++
++    public static State readState() {
++        String raw = FileUtils.readOneLine(NODE);
++        if (raw == null) {
++            return State.UNAVAILABLE;
++        }
++        String v = raw.trim();
++        switch (v) {
++            case "0":
++                return State.OFF;
++            case "1":
++                return State.ON;
++            case "0-pending":
++                return State.PENDING_OFF;
++            case "1-pending":
++                return State.PENDING_ON;
++            default:
++                return State.UNAVAILABLE;
++        }
++    }
++
++    /**
++     * Requests a transition. Returns false immediately if the write itself
++     * failed (node missing, or the kernel returned -EBUSY because a
++     * transition was already in flight) — callers should not assume the
++     * transition is complete just because this returns true; poll
++     * {@link #readState()} until it's no longer PENDING_*.
++     */
++    public static boolean requestState(boolean enable) {
++        return FileUtils.writeLine(NODE, enable ? "1" : "0");
++    }
++
++    public static boolean isPending(State state) {
++        return state == State.PENDING_ON || state == State.PENDING_OFF;
++    }
++
++    public static boolean isOn(State state) {
++        return state == State.ON || state == State.PENDING_ON;
++    }
++}
+diff --git a/src/org/lineageos/settings/charge/ChargeSettingsFragment.java b/src/org/lineageos/settings/charge/ChargeSettingsFragment.java
+index 94b0508..2148c74 100644
+--- a/src/org/lineageos/settings/charge/ChargeSettingsFragment.java
++++ b/src/org/lineageos/settings/charge/ChargeSettingsFragment.java
+@@ -19,9 +19,12 @@ package org.lineageos.settings.charge;
+ import android.content.Intent;
+ import android.content.SharedPreferences;
+ import android.os.Bundle;
++import android.os.Handler;
++import android.os.Looper;
+ 
+ import androidx.preference.ListPreference;
+ import androidx.preference.Preference;
++import androidx.preference.SwitchPreferenceCompat;
+ import com.android.settingslib.widget.SettingsBasePreferenceFragment;
+ import androidx.preference.PreferenceManager;
+ 
+@@ -32,6 +35,12 @@ import org.lineageos.settings.R;
+  * cycle through OK -> COOL -> NUKE via the QS tile. Reads/writes the same
+  * SharedPreferences key the tile uses, and drives the same enforcement
+  * service, so both stay in sync no matter which one was used last.
++ *
++ * Also hosts the bypass-charging switch. That node is asynchronous on the
++ * kernel side (~5s, see BypassChargingUtils/the sysfs ABI doc), so the
++ * switch polls for confirmation instead of assuming the write landed
++ * immediately, and disables itself while a transition is in flight so the
++ * user can't fire a second request into the kernel's -EBUSY path.
+  */
+ public class ChargeSettingsFragment extends SettingsBasePreferenceFragment
+         implements Preference.OnPreferenceChangeListener {
+@@ -39,8 +48,14 @@ public class ChargeSettingsFragment extends SettingsBasePreferenceFragment
+     // Must match ChargeTileService.PREF_KEY
+     private static final String PREF_KEY = "saved_charge_mode";
+     private static final String CHARGE_MODE_PREF = "charge_mode_pref";
++    private static final String BYPASS_CHARGING_PREF = "bypass_charging_pref";
++    private static final long BYPASS_POLL_INTERVAL_MS = 250L;
++    private static final long BYPASS_POLL_TIMEOUT_MS = 8000L; // headroom over the ~5s kernel sequence
+ 
+     private ListPreference mChargeModePref;
++    private SwitchPreferenceCompat mBypassChargingPref;
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++    private long mBypassPollDeadline;
+ 
+     @Override
+     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+@@ -51,27 +66,98 @@ public class ChargeSettingsFragment extends SettingsBasePreferenceFragment
+         mChargeModePref.setValue(String.valueOf(savedIndex));
+         updateSummary(savedIndex);
+         mChargeModePref.setOnPreferenceChangeListener(this);
++
++        mBypassChargingPref = (SwitchPreferenceCompat) findPreference(BYPASS_CHARGING_PREF);
++        mBypassChargingPref.setOnPreferenceChangeListener(this);
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        refreshBypassChargingState();
++    }
++
++    @Override
++    public void onPause() {
++        super.onPause();
++        mHandler.removeCallbacksAndMessages(null);
+     }
+ 
+     @Override
+     public boolean onPreferenceChange(Preference preference, Object newValue) {
+-        if (!CHARGE_MODE_PREF.equals(preference.getKey())) {
+-            return false;
++        if (CHARGE_MODE_PREF.equals(preference.getKey())) {
++            int index = Integer.parseInt((String) newValue);
++            getPrefs().edit().putInt(PREF_KEY, index).apply();
++            updateSummary(index);
++
++            // Mirror ChargeTileService.onClick(): start/stop the enforcement
++            // service based on the newly selected mode.
++            Intent intent = new Intent(getActivity(), ChargeEnforcementService.class);
++            if (index > 0) {
++                getActivity().startService(intent);
++            } else {
++                getActivity().stopService(intent);
++            }
++            return true;
+         }
+ 
+-        int index = Integer.parseInt((String) newValue);
+-        getPrefs().edit().putInt(PREF_KEY, index).apply();
+-        updateSummary(index);
+-
+-        // Mirror ChargeTileService.onClick(): start/stop the enforcement
+-        // service based on the newly selected mode.
+-        Intent intent = new Intent(getActivity(), ChargeEnforcementService.class);
+-        if (index > 0) {
+-            getActivity().startService(intent);
+-        } else {
+-            getActivity().stopService(intent);
++        if (BYPASS_CHARGING_PREF.equals(preference.getKey())) {
++            boolean enable = (Boolean) newValue;
++            mBypassChargingPref.setEnabled(false);
++            mBypassChargingPref.setSummary(R.string.bypass_charging_summary_pending);
++            if (!BypassChargingUtils.requestState(enable)) {
++                // write rejected outright (missing node, or -EBUSY) — don't
++                // let the switch show a state that was never applied
++                mBypassChargingPref.setEnabled(true);
++                refreshBypassChargingState();
++                return false;
++            }
++            mBypassPollDeadline = System.currentTimeMillis() + BYPASS_POLL_TIMEOUT_MS;
++            mHandler.postDelayed(mBypassPollRunnable, BYPASS_POLL_INTERVAL_MS);
++            return true;
++        }
++
++        return false;
++    }
++
++    private final Runnable mBypassPollRunnable = new Runnable() {
++        @Override
++        public void run() {
++            BypassChargingUtils.State state = BypassChargingUtils.readState();
++            applyBypassChargingState(state);
++
++            if (BypassChargingUtils.isPending(state)
++                    && System.currentTimeMillis() < mBypassPollDeadline) {
++                mHandler.postDelayed(this, BYPASS_POLL_INTERVAL_MS);
++            } else {
++                mBypassChargingPref.setEnabled(true);
++            }
++        }
++    };
++
++    private void refreshBypassChargingState() {
++        applyBypassChargingState(BypassChargingUtils.readState());
++    }
++
++    private void applyBypassChargingState(BypassChargingUtils.State state) {
++        mBypassChargingPref.setChecked(BypassChargingUtils.isOn(state));
++        switch (state) {
++            case ON:
++                mBypassChargingPref.setSummary(R.string.bypass_charging_summary_on);
++                break;
++            case OFF:
++                mBypassChargingPref.setSummary(R.string.bypass_charging_summary_off);
++                break;
++            case PENDING_ON:
++            case PENDING_OFF:
++                mBypassChargingPref.setSummary(R.string.bypass_charging_summary_pending);
++                break;
++            case UNAVAILABLE:
++            default:
++                mBypassChargingPref.setSummary(R.string.bypass_charging_summary_unavailable);
++                mBypassChargingPref.setEnabled(false);
++                break;
+         }
+-        return true;
+     }
+ 
+     private void updateSummary(int index) {

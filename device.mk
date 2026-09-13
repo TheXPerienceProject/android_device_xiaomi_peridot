@@ -326,6 +326,9 @@ endif
 # Dolby
 $(call inherit-product, hardware/dolby/dolby.mk)
 
+TARGET_INCLUDES_OEM_App := true
+TARGET_INCLUDES_DolbyVision := true
+
 # Media
 PRODUCT_COPY_FILES += \
     $(AUDIO_HAL_DIR)/configs/common/codec2/media_codecs_c2_audio.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2_audio.xml
@@ -577,4 +580,5 @@ $(call inherit-product-if-exists, device/xiaomi/peridot-miuicamera/device.mk)
 $(call inherit-product, packages/apps/NotGameTurbo/notgameturbo.mk)
 
 # Sign Build
--include vendor/xperience-priv/keys/keys.mk
+-include vendor/lineage-priv/keys/keys.mk
+
